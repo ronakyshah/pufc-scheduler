@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 import pandas as pd
 import random
 import ast
@@ -64,8 +65,32 @@ def get_or_create_folder(service, folder_name):
 # ---------------------------------------------------------
 # CORE DATA PROCESSING ENGINE
 # ---------------------------------------------------------
+def parse_cli_arguments(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    mode = "local"
+    schedule_path = None
+
+    if argv:
+        first = argv[0].strip().lower()
+        if first in {"local", "google"}:
+            mode = first
+            argv = argv[1:]
+        else:
+            schedule_path = first
+
+    if argv:
+        if "--schedule-file" in argv:
+            idx = argv.index("--schedule-file")
+            if idx + 1 < len(argv):
+                schedule_path = argv[idx + 1]
+        elif argv[0].startswith("--schedule-file="):
+            schedule_path = argv[0].split("=", 1)[1]
+
+    return {"mode": mode, "schedule_path": schedule_path}
+
+
 def read_local_schedule(example_path=None):
-    example_path = example_path or config.INPUT_DIR / "exampleSchedule.csv"
+    example_path = Path(example_path) if example_path is not None else config.INPUT_DIR / "exampleSchedule.csv"
     if not example_path.exists():
         raise FileNotFoundError(f"Local example file not found: {example_path}")
 
@@ -82,47 +107,92 @@ def read_local_schedule(example_path=None):
     return df
 
 
-def export_referee_contacts(df, output_path=None):
+def export_referee_contacts(referee_source=None, output_path=None):
     output_path = output_path or config.INPUT_DIR / "referee.csv"
 
-    official_specs = [
-        ("Referee", "Referee", "Referee Email", "Referee Contact Phone"),
-        ("AR #1", "AR #1", "AR #1 Email", "AR #1 Contact Phone"),
-        ("AR #2", "AR #2", "AR #2 Email", "AR #2 Contact Phone"),
-        ("Other Official", "Other Official", "Other Official Email", "Other Official Contact Phone"),
-    ]
+    if referee_source is None:
+        referee_source = read_referee_pool()
 
-    referee_rows = []
-    for role, name_col, email_col, phone_col in official_specs:
-        subset = df[[name_col, email_col, phone_col]].copy()
-        subset = subset.dropna(how='all')
-        for _, row in subset.iterrows():
-            name = row.get(name_col)
-            email = row.get(email_col)
-            phone = row.get(phone_col)
-            if pd.isna(name) and pd.isna(email) and pd.isna(phone):
-                continue
+    if isinstance(referee_source, pd.DataFrame) and {'Name', 'Email', 'Phone'}.issubset(referee_source.columns):
+        referee_df = referee_source[['Name', 'Email', 'Phone']].copy()
+    else:
+        referee_df = pd.DataFrame(columns=['Name', 'Email', 'Phone'])
 
-            referee_rows.append({
-                'Role': role,
-                'Name': '' if pd.isna(name) else str(name).strip(),
-                'Email': '' if pd.isna(email) else str(email).strip(),
-                'Phone': '' if pd.isna(phone) else str(phone).strip(),
-            })
-
-    referee_df = pd.DataFrame(referee_rows)
-    if not referee_df.empty:
-        referee_df = referee_df.drop_duplicates(subset=['Role', 'Name', 'Email', 'Phone']).sort_values(by=['Role', 'Name'])
+    referee_df = referee_df.dropna(how='all').copy()
+    referee_df['Name'] = referee_df['Name'].fillna('').astype(str).str.strip()
+    referee_df['Email'] = referee_df['Email'].fillna('').astype(str).str.strip()
+    referee_df['Phone'] = referee_df['Phone'].fillna('').astype(str).str.strip()
+    referee_df = referee_df[referee_df['Name'] != '']
+    referee_df = referee_df.drop_duplicates(subset=['Name', 'Email', 'Phone']).sort_values(by=['Name'])
 
     referee_df.to_csv(output_path, index=False)
     return referee_df
 
 
-def fetch_schedule_and_emails(mode="google"):
+def read_referee_pool(input_path=None):
+    input_path = input_path or config.INPUT_DIR / "referee_input.csv"
+    if not input_path.exists():
+        raise FileNotFoundError(f"Referee input file not found: {input_path}")
+
+    df = pd.read_csv(input_path)
+    df['Age'] = pd.to_numeric(df['Age'], errors='coerce').fillna(0)
+    return df
+
+
+def assign_referees(games_df, referees_df):
+    games_df = games_df.copy()
+    games_df['Grade'] = pd.to_numeric(games_df['Grade'], errors='coerce').fillna(0)
+    games_df['Division'] = pd.to_numeric(games_df['Division'], errors='coerce').fillna(0)
+
+    roles = ['Referee', 'AR #1', 'AR #2']
+    for role in roles:
+        games_df[role] = pd.NA
+    games_df['Other Official'] = pd.NA
+
+    available_referees = referees_df[['Name', 'Age']].drop_duplicates().copy()
+    available_referees['Assignments'] = 0
+
+    def choose_referee(role, grade, division, used_names):
+        candidates = available_referees[~available_referees['Name'].isin(used_names)].copy()
+        if candidates.empty:
+            return None
+
+        if role == 'Referee':
+            if grade in [3, 4]:
+                candidates = candidates[candidates['Age'] < 20]
+            elif grade in [7, 8]:
+                candidates = candidates[candidates['Age'] >= 20]
+            elif grade == 6 and division in [1, 2]:
+                candidates = candidates[candidates['Age'] >= 20]
+
+        if candidates.empty:
+            candidates = available_referees[~available_referees['Name'].isin(used_names)].copy()
+
+        candidates = candidates[candidates['Assignments'] < 3]
+        if candidates.empty:
+            return None
+
+        candidates = candidates.sort_values(by=['Assignments', 'Age'], ascending=[True, True])
+        selected = candidates.iloc[0]
+        available_referees.loc[available_referees['Name'] == selected['Name'], 'Assignments'] += 1
+        return selected['Name']
+
+    for _, game in games_df.iterrows():
+        used_names = set()
+        for role in roles:
+            selected = choose_referee(role, int(game['Grade']), int(game['Division']), used_names)
+            if selected:
+                games_df.at[game.name, role] = selected
+                used_names.add(selected)
+
+    return games_df
+
+
+def fetch_schedule_and_emails(mode="google", schedule_path=None):
     mode = mode.lower()
 
     if mode == "local":
-        df = read_local_schedule()
+        df = read_local_schedule(schedule_path or config.INPUT_DIR / "exampleSchedule.csv")
 
         recipient_emails = set()
         for col in ['Home Coach Email', 'Away Coach Email']:
@@ -131,23 +201,21 @@ def fetch_schedule_and_emails(mode="google"):
             )
         recipient_emails = {email for email in recipient_emails if '@' in email}
 
-        export_referee_contacts(df)
+        referee_pool = read_referee_pool()
+        export_referee_contacts(referee_pool)
 
-        df_raw = df[['Date', 'Day_of_Week', 'Time_Slot', 'Field_Name', 'Team_Name', 'Coach_Name']].copy()
-        df_raw = df_raw.drop_duplicates(subset=['Date', 'Day_of_Week', 'Time_Slot', 'Field_Name', 'Team_Name', 'Coach_Name'])
-        df_raw = df_raw.sort_values(by=['Date', 'Time_Slot', 'Field_Name'])
+        df_with_referees = assign_referees(df, referee_pool)
+        output_schedule_path = config.OUTPUT_DIR / 'scheduled_games_with_referees.csv'
+        df_with_referees.to_csv(output_schedule_path, index=False)
 
-        if df_raw.empty:
+        pdf_df = df_with_referees[['Date', 'Day_of_Week', 'Time_Slot', 'Field_Name', 'Team_Name', 'Coach_Name', 'Referee', 'AR #1', 'AR #2', 'Other Official']].copy()
+        pdf_df = pdf_df.drop_duplicates(subset=['Date', 'Day_of_Week', 'Time_Slot', 'Field_Name', 'Team_Name', 'Coach_Name'])
+        pdf_df = pdf_df.sort_values(by=['Date', 'Time_Slot', 'Field_Name'])
+
+        if pdf_df.empty:
             return pd.DataFrame(columns=['Date', 'Day_of_Week', 'Time_Slot']), list(recipient_emails)
 
-        visual_grid = (
-            df_raw.groupby(['Date', 'Day_of_Week', 'Time_Slot', 'Field_Name'])['Team_Name']
-            .first()
-            .unstack('Field_Name')
-            .fillna('—')
-            .reset_index()
-        )
-        return visual_grid, list(recipient_emails)
+        return pdf_df, list(recipient_emails)
 
     fields_url = f"https://google.com{config.SHEET_ID}/export?format=xlsx&sheet=Fields"
     teams_url = f"https://google.com{config.SHEET_ID}/export?format=xlsx&sheet=Teams"
@@ -241,11 +309,21 @@ def create_pdf(df_schedule):
     story.append(header_table)
     story.append(Spacer(1, 10))
     
-    table_data = [[Paragraph(str(col), header_style) for col in df_schedule.columns]]
-    for _, row in df_schedule.iterrows():
+    display_df = df_schedule.copy()
+    for col in ['Referee', 'AR #1', 'AR #2', 'Other Official']:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].fillna('').astype(str)
+
+    table_data = [[Paragraph(str(col), header_style) for col in display_df.columns]]
+    for _, row in display_df.iterrows():
         table_data.append([Paragraph(str(val), cell_style) for val in row])
         
-    schedule_table = Table(table_data, colWidths=config.TABLE_COLUMN_WIDTHS)
+    if len(display_df.columns) <= 10:
+        column_widths = [50, 45, 50, 70, 90, 70, 55, 55, 55, 55][:len(display_df.columns)]
+    else:
+        column_widths = [550 / len(display_df.columns)] * len(display_df.columns)
+
+    schedule_table = Table(table_data, colWidths=column_widths)
     schedule_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor(config.COLOR_PRIMARY)),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
@@ -302,10 +380,15 @@ def broadcast_emails(email_list, web_link):
 # SCRIPT RUNNER ENTRYPOINT
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    mode = (sys.argv[1] if len(sys.argv) > 1 else "google").strip().lower()
-    print(f"Step 1: Loading schedule data from {'local example CSV' if mode == 'local' else 'Google Sheet'}...")
+    args = parse_cli_arguments()
+    mode = args["mode"]
+    schedule_path = args["schedule_path"]
 
-    df_schedule, recipient_emails = fetch_schedule_and_emails(mode)
+    print(f"Step 1: Loading schedule data from {'local example CSV' if mode == 'local' else 'Google Sheet'}...")
+    if schedule_path:
+        print(f"Using custom schedule file: {schedule_path}")
+
+    df_schedule, recipient_emails = fetch_schedule_and_emails(mode, schedule_path)
     create_pdf(df_schedule)
     print(f"PDF created at: {config.PDF_FILENAME}")
 
