@@ -9,7 +9,13 @@ Input Data Schemas
 
 exampleSchedule.csv and referee_input.csv provide the starting points for generating assignments
 
-TODO:  Implement the following logic as a separate look-up to ensure modularity
+TODO:  
+
+(1) Test Google spreadsheet lookup that integrates with Google workspace documentation for club's referee listing.  This is where we plan to centralize and secure referee information for week-to-week planning
+
+(2) Build and test API connectivity to AdminSports
+
+(3) Implement the following logic as a separate look-up to ensure modularity
 
   Rule 1 (High-Stakes Centers): Grades 6 & 8 (Divisions 1 & 2) require a Center Referee who is >18 years old OR has >=2 years of experience
   
@@ -21,4 +27,4 @@ TODO:  Implement the following logic as a separate look-up to ensure modularity
   
   Rule 5 (Open Slots): ARs for Grade 5 (all divisions) and Grades 6 & 8 (Divisions 3+) have no age or experience restrictions.
   
-  Rule 6:  available time ranges as outlined in referee_input.csv
+  Rule 6: Referee availability as outlined in referee_input.csv columns for Start and End Times
