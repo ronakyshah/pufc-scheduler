@@ -17,14 +17,17 @@ TODO:
 
 (3) Implement the following logic as a separate look-up to ensure modularity
 
-  Rule 1 (High-Stakes Centers): Grades 6 & 8 (Divisions 1 & 2) require a Center Referee who is >18 years old OR has >=2 years of experience
+  Rule 0:  (All centers first):  ensure that all centers are assigned first, before assigning ARs
   
-  Rule 2 (High-Stakes ARs): Assistant Referees (ARs) for Grade 8 (Divisions 1 & 2) must have >6 months (0.5 years) of experience.
+  Rule 1 (High-Stakes Centers): Grades 6 & 8 (Divisions 1 & 2) require a Center Referee who is >=18 years old OR has >=2 years of experience
   
-  Rule 3 (Junior Development): Grades 3 & 4 Center Referees can be any age, but the algorithm preferentially selects candidates >=18  years old.
+  Rule 2 (High-Stakes ARs): Assistant Referees (ARs) for Grade 8 (Divisions 1 & 2) must have >=0.5 years of experience
   
-  Rule 4 (Mid-Grade Centers): Grade 5 Center Referees must have >6 months of experience.
+  Rule 3 (Junior Development): Grades 3 & 4 Center Referees can be any age, but the algorithm preferentially selects candidates <18 years old
   
-  Rule 5 (Open Slots): ARs for Grade 5 (all divisions) and Grades 6 & 8 (Divisions 3+) have no age or experience restrictions.
+  Rule 4 (Mid-Grade Centers): Grade 5/All divisions  & Grade 6/Division 3+ Center Referees must have >=0.5 years of experience
   
-  Rule 6: Referee availability as outlined in referee_input.csv columns for Start and End Times
+  Rule 5 (Open Slots): ARs for Grade 5 (all divisions) and Grades 6 & 8 (Divisions 3+) have no age or experience restrictions
+  
+  Rule 6 (Load management): referees can do no more than 3 consecutive games, and only 1 at center
+
