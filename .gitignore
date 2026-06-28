@@ -1,0 +1,4 @@
+# this is .gitignore
+.env
+token.json
+__pycache__/
